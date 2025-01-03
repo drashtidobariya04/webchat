@@ -1,4 +1,5 @@
 const express = require("express");
+
 const bcryptjs = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const cors = require("cors");
@@ -7,6 +8,9 @@ const io = require("socket.io")(8080, {
     origin: "http://localhost:3000",
   },
 });
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs"); // Import fs module to handle file system operations
 
 const { sendOTPEmail, generateOTP } = require("./services/sendMail");
 
@@ -16,9 +20,8 @@ require("./db/connection");
 const Users = require("./models/Users");
 const Conversations = require("./models/Conversations");
 const Messages = require("./models/Messages");
-const UserProfile = require("./models/UserProfile");
-const sendLoginEmail = require("./services/sendMail");
-
+const Notice = require("./models/Calendar");
+// const upload = require("./services/uploadsPicture");
 // app Use
 const app = express();
 app.use(express.json());
@@ -84,6 +87,26 @@ io.on("connection", (socket) => {
   });
   // io.emit('getUsers', socket.userId);
 });
+// Create the 'uploads' folder if it doesn't exist
+const uploadsDir = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true }); // Create 'uploads' directory recursively if it doesn't exist
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, "./uploads"); // Folder where images will be stored (ensure this exists or create it)
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(
+      null,
+      file.fieldname + "-" + uniqueSuffix + path.extname(file.originalname)
+    ); // Unique filename for each image
+  },
+});
+
+const upload = multer({ storage: storage });
 
 // Routes
 app.get("/", (req, res) => {
@@ -115,110 +138,7 @@ app.post("/api/register", async (req, res, next) => {
   }
 });
 
-// // Login endpoint
-// app.post("/api/login", async (req, res) => {
-//   try {
-//     const { email, password } = req.body;
-
-//     // Check for missing fields
-//     if (!email || !password) {
-//       return res.status(400).send("Please fill all required fields");
-//     }
-
-//     // Find user by email
-//     const user = await Users.findOne({ email });
-//     if (!user) {
-//       return res.status(400).send("User email or password is incorrect");
-//     }
-
-//     // Validate password
-//     const validateUser = await bcryptjs.compare(password, user.password);
-//     if (!validateUser) {
-//       return res.status(400).send("User email or password is incorrect");
-//     }
-
-//     // Create JWT payload and sign token
-//     const payload = {
-//       userId: user._id,
-//       email: user.email,
-//     };
-//     const JWT_SECRET_KEY =
-//       process.env.JWT_SECRET_KEY || "THIS_IS_A_JWT_SECRET_KEY";
-
-//     jwt.sign(
-//       payload,
-//       JWT_SECRET_KEY,
-//       { expiresIn: 84600 }, // Token expiration time
-//       async (err, token) => {
-//         if (err) {
-//           console.error("Error signing token:", err);
-//           return res.status(500).send("Error creating token");
-//         }
-
-//         // Update user with the new token
-//         await Users.updateOne({ _id: user._id }, { $set: { token } });
-
-//         // Send login email
-//         await sendLoginEmail(user.email);
-//         console.log("send Email", user.email);
-
-//         // Respond with success
-//         return res.status(200).json({
-//           user: {
-//             id: user._id,
-//             email: user.email,
-//             fullName: user.fullName,
-//           },
-//           token: token,
-//         });
-//       }
-//     );
-//   } catch (error) {
-//     console.error("Error during login:", error);
-//     return res.status(500).send("Internal server error");
-//   }
-// });
-
-// Login endpoint
-app.post("/api/login", async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    // Check for missing fields
-    if (!email || !password) {
-      return res.status(400).send("Please fill all required fields");
-    }
-
-    // Find user by email
-    const user = await Users.findOne({ email });
-    if (!user) {
-      return res.status(400).send("User email or password is incorrect");
-    }
-
-    // Validate password
-    const validateUser = await bcryptjs.compare(password, user.password);
-    if (!validateUser) {
-      return res.status(400).send("User email or password is incorrect");
-    }
-
-    // Generate OTP and store it temporarily in the user document
-    const otp = generateOTP();
-    user.otp = otp;
-    user.otpExpiresAt = Date.now() + 10 * 60 * 1000; // OTP expires in 10 minutes
-    await user.save();
-
-    // Send OTP email
-    await sendOTPEmail(user.email, otp);
-
-    // Respond with a success message
-    return res.status(200).send("OTP sent to your email. Please verify.");
-  } catch (error) {
-    console.error("Error during login:", error);
-    return res.status(500).send("Internal server error");
-  }
-});
-
-// Verify OTP endpoint
+// // Verify OTP endpoint
 app.post("/api/verify-otp", async (req, res) => {
   try {
     const { email, otp } = req.body;
@@ -267,6 +187,43 @@ app.post("/api/verify-otp", async (req, res) => {
     });
   } catch (error) {
     console.error("Error during OTP verification:", error);
+    return res.status(500).send("Internal server error");
+  }
+});
+app.post("/api/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).send("Please fill all required fields");
+    }
+
+    // Find user by email
+    const user = await Users.findOne({ email });
+    if (!user) {
+      return res.status(400).send("User email or password is incorrect");
+    }
+
+    // Validate password
+    const validateUser = await bcryptjs.compare(password, user.password);
+    if (!validateUser) {
+      return res.status(400).send("User email or password is incorrect");
+    }
+
+    // Generate OTP and store it in the user document with expiration time (30 seconds)
+    const otp = generateOTP();
+    const otpExpiresAt = Date.now() + 30 * 1000; // OTP expires in 30 seconds
+    user.otp = otp;
+    user.otpExpiresAt = otpExpiresAt;
+    await user.save();
+
+    // Send OTP email
+    await sendOTPEmail(user.email, otp);
+
+    // Respond with success message
+    return res.status(200).send("OTP sent to your email. Please verify.");
+  } catch (error) {
+    console.error(error);
     return res.status(500).send("Internal server error");
   }
 });
@@ -364,66 +321,97 @@ app.get("/api/conversations/:userId", async (req, res) => {
   }
 });
 
-app.post("/api/message", async (req, res) => {
+// Route to handle sending messages and uploading images
+// Post route for sending a message with an optional image
+app.post("/api/message", upload.single("image"), async (req, res) => {
   try {
     const { conversationId, senderId, message, receiverId = "" } = req.body;
 
-    if (!senderId || !message)
+    // Handle image URL (if any) from the upload process
+    const imageUrl = req.file ? `uploads/${req.file.filename}` : null;
+
+    if (!senderId || !message) {
       return res.status(400).send("Please fill all required fields");
+    }
+
+    // If it's a new conversation
     if (conversationId === "new" && receiverId) {
-      const newCoversation = new Conversations({
+      const newConversation = new Conversations({
         members: [senderId, receiverId],
       });
-      await newCoversation.save();
+      await newConversation.save();
+
       const newMessage = new Messages({
-        conversationId: newCoversation._id,
+        conversationId: newConversation._id,
         senderId,
         message,
+        image: imageUrl,
       });
       await newMessage.save();
       return res.status(200).send("Message sent successfully");
-    } else if (!conversationId && !receiverId) {
+    }
+    // If conversation exists, send the message to the existing conversation
+    else if (!conversationId && !receiverId) {
       return res.status(400).send("Please fill all required fields");
     }
-    const newMessage = new Messages({ conversationId, senderId, message });
+
+    const newMessage = new Messages({
+      conversationId,
+      senderId,
+      message,
+      image: imageUrl,
+    });
+
     await newMessage.save();
     res.status(200).send("Message sent successfully");
   } catch (error) {
-    console.log(error, "Error");
+    console.error(error);
+    res.status(500).send("Error sending message");
   }
 });
 
+// Get route for fetching messages in a conversation
 app.get("/api/message/:conversationId", async (req, res) => {
   try {
+    const { conversationId } = req.params;
+
     const checkMessages = async (conversationId) => {
-      console.log(conversationId, "conversationId");
       const messages = await Messages.find({ conversationId });
-      const messageUserData = Promise.all(
+
+      const messageUserData = await Promise.all(
         messages.map(async (message) => {
           const user = await Users.findById(message.senderId);
           return {
-            user: { id: user._id, email: user.email, fullName: user.fullName },
+            user: {
+              id: user._id,
+              email: user.email,
+              fullName: user.fullName,
+            },
             message: message.message,
+            image: message.image, // Include image URL if it's present
           };
         })
       );
-      res.status(200).json(await messageUserData);
+
+      res.status(200).json(messageUserData);
     };
-    const conversationId = req.params.conversationId;
+
     if (conversationId === "new") {
       const checkConversation = await Conversations.find({
         members: { $all: [req.query.senderId, req.query.receiverId] },
       });
+
       if (checkConversation.length > 0) {
-        checkMessages(checkConversation[0]._id);
+        return checkMessages(checkConversation[0]._id);
       } else {
         return res.status(200).json([]);
       }
     } else {
-      checkMessages(conversationId);
+      await checkMessages(conversationId);
     }
   } catch (error) {
-    console.log("Error", error);
+    console.error("Error fetching messages", error);
+    res.status(500).send("Error fetching messages");
   }
 });
 
@@ -472,84 +460,107 @@ app.post("/api/notifications", async (req, res) => {
 });
 
 // Get all profiles
-app.get("/api/profiles", async (req, res) => {
-  try {
-    const profiles = await UserProfile.find(); // Fetch all profiles
-    res.status(200).json(profiles);
-  } catch (error) {
-    console.error("Error fetching profiles:", error);
-    res.status(500).json({ message: "Failed to fetch profiles", error });
-  }
+// app.get("/api/profiles", async (req, res) => {
+//   try {
+//     const profiles = await UserProfile.find(); // Fetch all profiles
+//     res.status(200).json(profiles);
+//   } catch (error) {
+//     console.error("Error fetching profiles:", error);
+//     res.status(500).json({ message: "Failed to fetch profiles", error });
+//   }
+// });
+
+// // Endpoint to fetch a user profile by userId
+// app.get("/api/profiles/:userId", async (req, res) => {
+//   try {
+//     const { userId } = req.params;
+
+//     // Validate if userId is a valid ObjectId
+//     if (!mongoose.Types.ObjectId.isValid(userId)) {
+//       return res
+//         .status(400)
+//         .json({ success: false, message: "Invalid userId format" });
+//     }
+
+//     console.log("Looking for profile with userId:", userId); // Log userId for debugging
+
+//     // Find the profile for the given userId, and optionally populate user details from the "Users" collection
+//     const profile = await UserProfile.findOne({ userId })
+//       .populate("userId", "email userFullName") // Replace with actual fields you need from Users collection
+//       .exec();
+
+//     // If profile not found, return 404 error
+//     if (!profile) {
+//       return res
+//         .status(404)
+//         .json({ success: false, message: "Profile not found" });
+//     }
+
+//     // Return the found profile data
+//     res.status(200).json({ success: true, profile });
+//   } catch (error) {
+//     // Log the error for debugging
+//     console.error("Error fetching profile:", error);
+
+//     // Return a 500 error if something goes wrong on the server
+//     res
+//       .status(500)
+//       .json({ success: false, message: "Failed to fetch profile", error });
+//   }
+// });
+
+// Define your API endpoint to handle profile updates (POST request)
+app.post("/api/profiles", upload.single("profilePicture"), (req, res) => {
+  const { userId, userName, gender, bio, location } = req.body;
+  const profilePicture = req.file ? req.file.path : null;
+
+  // Handle profile creation or updating logic here
+  const updatedProfile = {
+    userId,
+    userName,
+    gender,
+    bio,
+    location,
+    profilePicture,
+  };
+
+  // Send response
+  res.json({
+    message: "Profile updated successfully",
+    profile: updatedProfile,
+  });
 });
 
-// Get a specific user profile by userId
-app.get("/api/profiles/:userId", async (req, res) => {
+app.post("/api/notices", async (req, res) => {
   try {
-    const { userId } = req.params;
-    const profile = await UserProfile.findOne({ userId }); // Find by userId
-    if (!profile) {
-      return res.status(404).json({ message: "Profile not found" });
-    }
-    res.status(200).json(profile);
-  } catch (error) {
-    console.error("Error fetching profile:", error);
-    res.status(500).json({ message: "Failed to fetch profile", error });
-  }
-});
+    const { userId, title, description, date } = req.body;
 
-// Insert (or update) a user profile
-app.post("/api/profiles", async (req, res) => {
-  try {
-    const {
-      userId,
-      userName,
-      gender,
-      bio,
-      location,
-      profilePicture,
-      socialLinks,
-    } = req.body;
-    console.log(
-      "Profile Data:",
-      userId,
-      userName,
-      gender,
-      bio,
-      location,
-      profilePicture,
-      socialLinks
-    );
-
-    // Check if a profile already exists
-    let profile = await UserProfile.findOne({ userId });
-    console.log("Existing profile:", profile);
-
-    if (profile) {
-      // Update the existing profile
-      profile = await UserProfile.findOneAndUpdate(
-        { userId },
-        { userName, gender, bio, location, profilePicture, socialLinks },
-        { new: true, runValidators: true }
-      );
-      return res.status(200).json({ message: "Profile updated", profile });
+    // Validate the request body
+    if (!userId || !title || !date) {
+      return res.status(400).send("Please fill all required fields");
     }
 
-    // Create a new profile
-    profile = new UserProfile({
+    // Check if the user exists
+    const isUserExist = await Users.findById(userId); // Assuming Users is your User model
+    if (!isUserExist) {
+      return res.status(404).send("User not found");
+    }
+
+    // Create a new notice
+    const newNotice = new Notice({
       userId,
-      userName,
-      gender,
-      bio,
-      location,
-      profilePicture,
-      socialLinks,
+      title,
+      description,
+      date,
     });
 
-    await profile.save();
-    res.status(201).json({ message: "Profile created", profile });
+    // Save the notice
+    await newNotice.save();
+
+    return res.status(200).send("Notice added successfully");
   } catch (error) {
-    console.error("Error saving profile:", error);
-    res.status(500).json({ message: "Failed to save profile", error });
+    console.error("Error:", error);
+    return res.status(500).send("Failed to add notice");
   }
 });
 

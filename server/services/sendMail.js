@@ -66,6 +66,7 @@ const crypto = require("crypto"); // For generating OTP
 // };
 
 // Configure nodemailer transporter
+
 const sendOTPEmail = async (userEmail, otp) => {
   try {
     const transporter = nodemailer.createTransport({
@@ -98,6 +99,19 @@ const generateOTP = () => {
   return crypto.randomInt(100000, 999999).toString();
 };
 
-module.exports = { sendOTPEmail, generateOTP };
+// Generate OTP and store the expiration time (30 seconds)
+const generateOTPWithExpiry = async (user) => {
+  const otp = generateOTP();
+  const otpExpiresAt = Date.now() + 30 * 1000; // Expiry time is 30 seconds
+
+  // Store OTP and expiry time in the user document (assuming user is a MongoDB document)
+  user.otp = otp;
+  user.otpExpiresAt = otpExpiresAt;
+  await user.save();
+
+  return otp; // Return OTP so it can be sent to the user
+};
+
+module.exports = { sendOTPEmail, generateOTP, generateOTPWithExpiry };
 // module.exports = sendLoginEmail;
 // module.exports = sendMail;

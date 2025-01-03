@@ -12,6 +12,15 @@ const messageSchema = mongoose.Schema({
   message: {
     type: String,
   },
+  image: {
+    type: String,
+    default: null, // Default to null if no image is sent
+  },
+
+  createdAt: {
+    type: Date,
+    default: Date.now, // Automatically set the timestamp when the message is created
+  },
 });
 
 const messages = mongoose.model("message", messageSchema);

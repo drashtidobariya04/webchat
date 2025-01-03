@@ -16,6 +16,7 @@ const userSchema = mongoose.Schema({
   token: {
     type: String,
   },
+
   otp: { type: String },
   otpExpiresAt: { type: Date },
 });
